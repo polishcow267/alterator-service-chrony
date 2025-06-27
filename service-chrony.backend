@@ -1,0 +1,18 @@
+type = "Backend"
+module = "executor"
+interface = "service1"
+name = "service_chrony"
+
+[methods.Info]
+execute = "cat /usr/share/alterator/service/service-chrony.service"
+action_id = "Info"
+stdout_bytes = true
+
+[methods.Deploy]
+execute = "service-chrony -p"
+action_id = "Deploy"
+stdout_strings = true
+stdin_string = true
+stdout_signal_name = "service_stdout_signal"
+stderr_signal_name = "service_stderr_signal"
+timeout = 600

@@ -1,0 +1,75 @@
+type = "Service"
+name = "Chrony service"
+category = "X-Alterator-Servers"
+display_name.en = "Chrony service"
+display_name.ru = "Сервис Chrony"
+no_default_diag = true
+
+[parameters.ntpServersSettings]
+display_name.en = "NTP servers settings"
+display_name.ru = "Настройки серверов NTP"
+type = "object"
+context = [
+    "deploy"
+]
+[parameters.ntpServersSettings.properties.ipAddress]
+display_name.en = "IP address of NTP server"
+display_name.ru = "IP адрес сервера NTP"
+type = "array"
+array_type = "string"
+array_min = 1
+pattern = "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:/(?:[1-2]?[0-9]|3[0-2]))?$"
+[parameters.ntpServersSettings.properties.maxpool]
+display_name.en = "Maxpoll"
+display_name.ru = "Maxpoll"
+type = "integer"
+default = 0
+[parameters.ntpServersSettings.properties.minpool]
+display_name.en = "Minpoll"
+display_name.ru = "Minpoll"
+type = "integer"
+default = 0
+[parameters.ntpServersSettings.properties.burst]
+display_name.en = "Burst"
+display_name.ru = "Burst"
+type = "enum"
+values = ["burst", "iburst"]
+default = "iburst"
+[parameters.ntpServersSettings.properties.serverMode]
+display_name.en = "Server mode"
+display_name.ru = "Режим работы сервера"
+type = "enum"
+values = ["prefer", "noselect", "trust", "require", "default"]
+
+
+[parameters.clientsSettings]
+type = "object"
+context = [
+    "deploy"
+]
+[parameters.clientsSettings.properties.localStratum]
+display_name.en = "Local stratum of this server"
+display_name.ru = "Уровень этого сервера"
+type = "integer"
+default = 10
+[parameters.clientsSettings.properties.ipAddress]
+display_name.en = "IP address of NTP server"
+display_name.ru = "IP адрес сервера NTP"
+type = "array"
+array_type = "string"
+array_min = 1
+pattern = "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:/(?:[1-2]?[0-9]|3[0-2]))?$"
+[parameters.clientsSettings.properties.]
+
+[resources.chronyConf]
+display_name.en = "Chrony configuring file"
+display_name.ru = "Конфигурационный файл Chrony"
+type = "file"
+path.value = "/etc/chrony.conf"
+
+[resources.Chronyd]
+display_name.en = "Chronyd service"
+display_name.ru = "Сервис chronyd"
+type = "systemd_unit"
+unit_name.value = "chronyd.service"
+

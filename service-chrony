@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+# Samba active directory provision
+# Tool for provision samba active directory
+#
+# Copyright (C) 2024 Evgenii Sozonov <arzdez@altlinux.org>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# shellcheck disable=SC2034
+# shellcheck disable=SC1091
+# shellcheck disable=SC2086
+# shellcheck disable=SC2317
+# shellcheck disable=SC3037
+
+set -euo pipefail
+
+. shell-getopt
+. shell-ini-config
+
+
+PROG_NAME="${0##*/}"
+VERSION="0.1"
+MODE="provision"
+GLOBAL_EXIT=0
+input_json=
+entryfile=/usr/share/alterator/service/service-chrony.service
+
+OPTIONS_LIST="provision,
+              start,
+              stop,
+              configure"
+
+OPTIONS_SHORT_LIST="p"
+
+TEMP=$(getopt -n "$PROG_NAME" -o "$OPTIONS_SHORT_LIST" -l "$OPTIONS_LIST" -- "$@")
+eval set -- "$TEMP"
+
+while :; do
+    case "$1" in
+        -p|--provision)
+            MODE="provision"
+            ;;
+        --start)
+            MODE="start"
+            ;;
+        --stop)
+            MODE="stop"
+            ;;
+        --) shift; break
+            ;;
+        *) fatal "Unrecognized option: $1"
+            ;;
+    esac
+    shift
+done
+
+validate_json(){
+    local input_json="$1"
+    local mode_value="$2"
+    local retval=0
+    local path_to_schema=
+    path_to_schema="/usr/share/alterator-service-samba/samba-dc/$mode_value-parameters.schema.json"
+
+    jsonschema "$path_to_schema" <<< $input_json &>/dev/null || retval=1
+
+    return $retval
+}
+
+get_json_value() {
+    local json="$1"
+    local key="$2"
+    local path="${3:-.}"
+    echo "$json" | jq -r --arg k "$key" "$path.[\$k]" 2>/dev/null
+}
+
+backup_config() {
+    local config_file="$1"
+    local type="$2"
+    local retval=0
+
+    mkdir -p /usr/share/alterator-service-samba/samba-dc/config-backup
+    local backup_file=
+
+    backup_file="/usr/share/alterator-service-samba/samba-dc/config-backup/$(basename $config_file).$type"
+    if [ -f "$backup_file" ]; then
+        echo "Backup file $backup_file already exists, skipping backup."
+    fi
+    if [ -f "$config_file" ]; then
+        mv -u "$config_file" "$backup_file" || retval=1
+    else
+        echo "File $config_file not found, skipping backup."
+    fi
+
+    return $retval
+}
+
+remove_sensitive_data() {
+    local input_json="$1"
+
+    input_json="$(echo "$input_json" | jq 'del(.adminPassword)')"
+
+    echo "$input_json"
+    return 0
+}
+
+reset_to_default(){
+    local backup_dir="/usr/share/alterator-service-samba/samba-dc/config-backup"
+    rm -f /usr/share/alterator-service-samba/samba-dc/deployment-config.json
+    rm -rf /var/lib/samba
+    rm -rf /var/cache/samba
+
+    mv -u $backup_dir/smb.conf.original /etc/samba/smb.conf
+    mv -u $backup_dir/krb5.conf.original /etc/krb5.conf
+    mv -u $backup_dir/resolv.conf.original /etc/resolv.conf
+    mkdir -p /var/lib/samba
+
+    chmod 644 /etc/samba/smb.conf
+    chmod 644 /etc/krb5.conf
+    chmod 644 /etc/resolv.conf
+    return 0
+}
+
+
+read_stdin()
+{
+    local input_json=
+    local retval=0
+
+    if [ -t 0 ]; then
+        echo "No input from stdin"
+        retval=1
+    fi
+
+    while read -r line; do
+        input_json+="$line"
+    done
+
+    if [ -z "$input_json" ]; then
+        echo "Empty input"
+        retval=1
+    fi
+
+    echo "$input_json"
+    return $retval
+}
+
+parse_json() {
+    local json_struct="$1"
+    local param_name="$2"
+    local retval=0
+
+    local param_value=
+    param_value="$(echo "$json_struct" | jq -r ".$param_name")"
+    if [ -z "$param_value" ]; then
+        false
+    else
+        echo "$param_value"
+    fi
+
+    return 0
+}
+
+upper() {
+    echo -n "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+
+edit_resolv_conf() {
+    local domain_realm="$1"
+
+    cat <<EOF > /etc/resolv.conf
+search $domain_realm
+nameserver 127.0.0.1
+EOF
+    return 0
+}
+
+
+call_domain_provision() {
+    local input_json="$1"
+    local retval=0
+    local mode_value="provision"
+    local dns_keys=
+    local unsensetive_json=
+    local args=()
+    local keys
+    local value=
+    keys=$(echo "$input_json" | jq -r 'keys[]')
+
+    for key in $keys; do
+        case "$key" in
+            adminPassword)
+                value=$(get_json_value "$input_json" "$key" ".")
+                args+=(--adminpass "$value")
+                ;;
+            useRfc2307)
+                value=$(get_json_value "$input_json" "$key" ".")
+                [ "$value" = "true" ] && args+=(--use-rfc2307)
+                ;;
+            backendStore)
+                value=$(get_json_value "$input_json" "$key" ".")
+                backend_store="$value"
+                [ "$value" = "mdb" ] && args+=(--backend-store mdb)
+                ;;
+            functionalLevel)
+                value=$(get_json_value "$input_json" "$key" ".")
+                [ -n "$value" ] && args+=(--function-level "$value")
+                if [ "$value" = "2016" ]; then
+                    args+=(--option="ad dc functional level=2016")
+                fi
+                ;;
+            siteName)
+                value=$(get_json_value "$input_json" "$key" ".")
+                [ -n "$value" ] && args+=(--site "$value")
+                ;;
+            netBiosName)
+                value=$(get_json_value "$input_json" "$key" ".")
+                [ -n "$value" ] && args+=(--domain "$value")
+                ;;
+            serverRole)
+                value=$(get_json_value "$input_json" "$key" ".")
+                [ -n "$value" ] && args+=(--server-role "$value")
+                ;;
+            realm)
+                value=$(get_json_value "$input_json" "$key" ".")
+                [ -n "$value" ] && args+=(--realm "$value")
+                domain_realm="$value"
+                ;;
+            forceDeploy)
+                value=$(get_json_value "$input_json" "$key" ".")
+                force_deploy_flag="$value"
+                ;;
+            *)
+                false
+                ;;
+        esac
+    done
+
+    dns_keys=$(echo "$input_json" | jq -r '.dnsSettings | keys[]')
+    for dns_key in $dns_keys; do
+        case "$dns_key" in
+            dnsBackend)
+                value=$(get_json_value "$input_json" "$dns_key" ".dnsSettings")
+                dns_backend=$(echo "$value" | tr -d '[]\n ' )
+                [ -n "$value" ] && args+=(--dns-backend "$value")
+                ;;
+            forwarders)
+                value="$(get_json_value "$input_json" "$dns_key" ".dnsSettings")"
+                value=$(echo "$value" | tr -d '[]"\n ' )
+                if [ -n "$value" ]; then
+                    args+=("--option=dns forwarder=$value")
+                fi
+                ;;
+            *)
+                false
+                ;;
+        esac
+    done
+
+    backend_store_size=$(echo "$input_json" | jq -r '.backendStoreSize // empty')
+    if [ "$backend_store" = "mdb" ] && [ -n "$backend_store_size" ]; then
+        args+=(--backend-store-size "${backend_store_size}Gb")
+    fi
+
+    if [ "$force_deploy_flag" = "true" ]; then
+            force_deploy || retval=1
+    else
+        backup_config /etc/samba/smb.conf  "original"
+        backup_config /etc/krb5.conf "original"
+        backup_config /etc/resolv.conf "original"
+    fi
+
+    unsensetive_json="$(remove_sensitive_data "$input_json")"
+    echo "$unsensetive_json" > /usr/share/alterator-service-samba/samba-dc/deployment-config.json
+    set_hostname "$domain_realm" || retval=1
+    samba-tool domain provision "${args[@]}" || retval=1
+
+    if [ $retval -eq 0 ]; then
+        edit_krb5_conf "$domain_realm" || { echo "ERROR: Failed to configure /etc/krb5.conf after provision."; retval=1; }
+        if [ $retval -eq 0 ]; then
+            edit_resolv_conf "$domain_realm" || { echo "ERROR: Failed to configure /etc/resolv.conf after provision."; retval=1; }
+        fi
+        if [ $retval -eq 0 ]; then
+            echo "Samba DC successfully provisioned and system has been configured."
+        else
+            echo "WARNING: Post-provision configuration steps failed. The DC was provisioned, but the system may require manual configuration checks."
+        fi
+    else
+        echo "ERROR: Failed to provision domain. 'samba-tool domain provision' command failed."
+    fi
+
+
+    return $retval
+}
+
+
+
+call_provision() {
+    local retval=0
+    local input_json=
+    local mode_value=
+    input_json="$(read_stdin)"
+
+    ntp_keys=$(echo "$input_json" | jq -r '.ntpServersSettings | keys[]')
+
+    for ntp_key in $ntp_keys; do
+        case "$ntp_key" in
+            ipAddress)
+                value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
+                value=$(echo "$value" | tr -d '[]"\n ' )
+                if [ -n "$value" ]; then
+                    args+=("-- forwarder=$value")
+                fi
+                ;;
+            *)
+                false
+                ;;
+        esac
+        echo "$key"
+    done
+
+
+    return $retval
+}
+
+
+call_backup() {
+    # TODO {arzdez} "Implement backup"
+    echo "Backup comming soon"
+    return 0
+}
+
+call_restore() {
+    # TODO {arzdez} "Implement restore"
+    echo "Restore comming soon"
+    return 0
+}
+
+call_start() {
+    local retval=0
+    systemctl enable --now chronyd.service || retval=1
+
+
+    return $retval
+}
+
+call_stop(){
+    local retval=0
+    systemctl disable --now  samba.service || retval=1
+    return $retval
+}
+
+case "$MODE" in
+    provision)
+        call_provision || GLOBAL_EXIT=1
+        ;;
+    start)
+        call_start || GLOBAL_EXIT=1
+        ;;
+    stop)
+        call_stop || GLOBAL_EXIT=1
+        ;;
+esac
+
+exit $GLOBAL_EXIT
