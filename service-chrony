@@ -36,26 +36,53 @@ GLOBAL_EXIT=0
 input_json=
 entryfile=/usr/share/alterator/service/service-chrony.service
 
-OPTIONS_LIST="provision,
+OPTIONS_LIST="help,
+              version,
+              demote,
+              provision,
+              restore,
+              backup,
+              status,
               start,
               stop,
               configure"
 
-OPTIONS_SHORT_LIST="p"
+OPTIONS_SHORT_LIST="h,v,d,p,b,r,s"
 
 TEMP=$(getopt -n "$PROG_NAME" -o "$OPTIONS_SHORT_LIST" -l "$OPTIONS_LIST" -- "$@")
 eval set -- "$TEMP"
 
 while :; do
     case "$1" in
+        -h|--help)
+            show_usage
+            ;;
+        -v|--version)
+            show_version
+            ;;
+        -d|--demote)
+            MODE="demote"
+            ;;
         -p|--provision)
             MODE="provision"
+            ;;
+        -r|--restore)
+            MODE="restore"
+            ;;
+        -b|--backup)
+            MODE="backup"
+            ;;
+        -s|--status)
+            MODE="status"
             ;;
         --start)
             MODE="start"
             ;;
         --stop)
             MODE="stop"
+            ;;
+        --configure)
+            MODE="configure"
             ;;
         --) shift; break
             ;;
@@ -87,50 +114,28 @@ get_json_value() {
 backup_config() {
     local config_file="$1"
     local type="$2"
+    local flag="$3"
     local retval=0
 
-    mkdir -p /usr/share/alterator-service-samba/samba-dc/config-backup
+    mkdir -p /usr/share/alterator-service-chrony/config-backup
     local backup_file=
 
-    backup_file="/usr/share/alterator-service-samba/samba-dc/config-backup/$(basename $config_file).$type"
+    backup_file="/usr/share/alterator-service-chrony/config-backup/$(basename $config_file).$type"
     if [ -f "$backup_file" ]; then
         echo "Backup file $backup_file already exists, skipping backup."
     fi
     if [ -f "$config_file" ]; then
-        mv -u "$config_file" "$backup_file" || retval=1
+        if [ "$flag" = 1 ]; then
+            cp -u "$config_file" "$backup_file" || retval=1
+        else 
+            mv -u "$config_file" "$backup_file" || retval=1
+        fi
     else
         echo "File $config_file not found, skipping backup."
     fi
 
     return $retval
 }
-
-remove_sensitive_data() {
-    local input_json="$1"
-
-    input_json="$(echo "$input_json" | jq 'del(.adminPassword)')"
-
-    echo "$input_json"
-    return 0
-}
-
-reset_to_default(){
-    local backup_dir="/usr/share/alterator-service-samba/samba-dc/config-backup"
-    rm -f /usr/share/alterator-service-samba/samba-dc/deployment-config.json
-    rm -rf /var/lib/samba
-    rm -rf /var/cache/samba
-
-    mv -u $backup_dir/smb.conf.original /etc/samba/smb.conf
-    mv -u $backup_dir/krb5.conf.original /etc/krb5.conf
-    mv -u $backup_dir/resolv.conf.original /etc/resolv.conf
-    mkdir -p /var/lib/samba
-
-    chmod 644 /etc/samba/smb.conf
-    chmod 644 /etc/krb5.conf
-    chmod 644 /etc/resolv.conf
-    return 0
-}
-
 
 read_stdin()
 {
@@ -175,201 +180,204 @@ upper() {
     echo -n "$1" | tr '[:lower:]' '[:upper:]'
 }
 
-
-edit_resolv_conf() {
-    local domain_realm="$1"
-
-    cat <<EOF > /etc/resolv.conf
-search $domain_realm
-nameserver 127.0.0.1
-EOF
-    return 0
-}
-
-
-call_domain_provision() {
-    local input_json="$1"
-    local retval=0
-    local mode_value="provision"
-    local dns_keys=
-    local unsensetive_json=
-    local args=()
-    local keys
-    local value=
-    keys=$(echo "$input_json" | jq -r 'keys[]')
-
-    for key in $keys; do
-        case "$key" in
-            adminPassword)
-                value=$(get_json_value "$input_json" "$key" ".")
-                args+=(--adminpass "$value")
-                ;;
-            useRfc2307)
-                value=$(get_json_value "$input_json" "$key" ".")
-                [ "$value" = "true" ] && args+=(--use-rfc2307)
-                ;;
-            backendStore)
-                value=$(get_json_value "$input_json" "$key" ".")
-                backend_store="$value"
-                [ "$value" = "mdb" ] && args+=(--backend-store mdb)
-                ;;
-            functionalLevel)
-                value=$(get_json_value "$input_json" "$key" ".")
-                [ -n "$value" ] && args+=(--function-level "$value")
-                if [ "$value" = "2016" ]; then
-                    args+=(--option="ad dc functional level=2016")
-                fi
-                ;;
-            siteName)
-                value=$(get_json_value "$input_json" "$key" ".")
-                [ -n "$value" ] && args+=(--site "$value")
-                ;;
-            netBiosName)
-                value=$(get_json_value "$input_json" "$key" ".")
-                [ -n "$value" ] && args+=(--domain "$value")
-                ;;
-            serverRole)
-                value=$(get_json_value "$input_json" "$key" ".")
-                [ -n "$value" ] && args+=(--server-role "$value")
-                ;;
-            realm)
-                value=$(get_json_value "$input_json" "$key" ".")
-                [ -n "$value" ] && args+=(--realm "$value")
-                domain_realm="$value"
-                ;;
-            forceDeploy)
-                value=$(get_json_value "$input_json" "$key" ".")
-                force_deploy_flag="$value"
-                ;;
-            *)
-                false
-                ;;
-        esac
-    done
-
-    dns_keys=$(echo "$input_json" | jq -r '.dnsSettings | keys[]')
-    for dns_key in $dns_keys; do
-        case "$dns_key" in
-            dnsBackend)
-                value=$(get_json_value "$input_json" "$dns_key" ".dnsSettings")
-                dns_backend=$(echo "$value" | tr -d '[]\n ' )
-                [ -n "$value" ] && args+=(--dns-backend "$value")
-                ;;
-            forwarders)
-                value="$(get_json_value "$input_json" "$dns_key" ".dnsSettings")"
-                value=$(echo "$value" | tr -d '[]"\n ' )
-                if [ -n "$value" ]; then
-                    args+=("--option=dns forwarder=$value")
-                fi
-                ;;
-            *)
-                false
-                ;;
-        esac
-    done
-
-    backend_store_size=$(echo "$input_json" | jq -r '.backendStoreSize // empty')
-    if [ "$backend_store" = "mdb" ] && [ -n "$backend_store_size" ]; then
-        args+=(--backend-store-size "${backend_store_size}Gb")
-    fi
-
-    if [ "$force_deploy_flag" = "true" ]; then
-            force_deploy || retval=1
-    else
-        backup_config /etc/samba/smb.conf  "original"
-        backup_config /etc/krb5.conf "original"
-        backup_config /etc/resolv.conf "original"
-    fi
-
-    unsensetive_json="$(remove_sensitive_data "$input_json")"
-    echo "$unsensetive_json" > /usr/share/alterator-service-samba/samba-dc/deployment-config.json
-    set_hostname "$domain_realm" || retval=1
-    samba-tool domain provision "${args[@]}" || retval=1
-
-    if [ $retval -eq 0 ]; then
-        edit_krb5_conf "$domain_realm" || { echo "ERROR: Failed to configure /etc/krb5.conf after provision."; retval=1; }
-        if [ $retval -eq 0 ]; then
-            edit_resolv_conf "$domain_realm" || { echo "ERROR: Failed to configure /etc/resolv.conf after provision."; retval=1; }
-        fi
-        if [ $retval -eq 0 ]; then
-            echo "Samba DC successfully provisioned and system has been configured."
-        else
-            echo "WARNING: Post-provision configuration steps failed. The DC was provisioned, but the system may require manual configuration checks."
-        fi
-    else
-        echo "ERROR: Failed to provision domain. 'samba-tool domain provision' command failed."
-    fi
-
-
-    return $retval
-}
-
-
-
 call_provision() {
     local retval=0
     local input_json=
-    local mode_value=
+    local ntp_values=()
+    local local_subnets=()
     input_json="$(read_stdin)"
+    
+    echo -e "Data is received from stdin"
+    
+    backup_config /etc/chrony.conf "original" 1 || retval=1
 
-    ntp_keys=$(echo "$input_json" | jq -r '.ntpServersSettings | keys[]')
+    keys=$(echo "$input_json" | jq -r 'keys[]')
+    for key in $keys; do
+        case "$key" in
+            defaultPoll)
+                dP_value="$(parse_json "$input_json" "$key")"
+                if [ -n "$dP_value" ] && [ "$dP_value" != "null" ] && [ "$dP_value" = "true" ]; then
+                    sed -i '/^\s*pool pool\.ntp\.org/ s/^/#/' /etc/chrony.conf || retval=1
+                    echo -e "Pool is changed\n"
+                fi  
+                ;;
+            *)
+                false
+                ;;
+        esac
+    done
 
+
+    ntp_keys=$(echo "$input_json" | jq -r '.ntpServersSettings | keys[]?')
     for ntp_key in $ntp_keys; do
         case "$ntp_key" in
-            ipAddress)
+            serverDomainName)
                 value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
-                value=$(echo "$value" | tr -d '[]"\n ' )
-                if [ -n "$value" ]; then
-                    args+=("-- forwarder=$value")
+                if [ -n "$value" ] && [ "$value" != "null" ]; then
+                    echo -e "\nserver ${value} iburst" >> /etc/chrony.conf || retval=1
+                    echo "${value}"
                 fi
                 ;;
             *)
                 false
                 ;;
         esac
-        echo "$key"
+    done
+    
+    subnet_keys=$(echo "$input_json" | jq -r '.clientsSettings | keys[]?')
+    for subnet_key in $subnet_keys; do
+        case "$subnet_key" in
+            subnetIpAddresses)
+                value="$(echo "$input_json" | jq -r '.clientsSettings.subnetIpAddresses // empty' | tr -d '[], \n"')"
+                if [ -n "$value" ] && [ "$value" != "null" ]; then
+                    echo -e "\nallow ${value}" >> /etc/chrony.conf || retval=1
+                    #echo -e "Allowing access for subnet: ${value}\n"
+                fi
+                ;;
+            localStratum)
+                value="$(get_json_value "$input_json" "$subnet_key" ".clientsSettings")"
+                if [ -n "$value" ] && [ "$value" != "null" ]; then
+                    echo -e "\nlocal stratum ${value}" >> /etc/chrony.conf || retval=1
+                    echo -e "Local stratum is set to ${value}\n"
+                fi
+                ;;
+            *)
+                false
+                ;;
+        esac
     done
 
-
+    echo "$input_json" > /usr/share/alterator-service-chrony/deployment-config.json || retval=1
+    
+    if [ $retval -eq 0 ]; then
+        # Add NTP servers from ntp_values array
+        #if [ "${#ntp_values[@]}" -gt 0 ]; then
+        #    for value in "${ntp_values[@]}"; do
+        #        if [ -n "$value" ]; then
+        #            echo -e "${value}" >> /etc/chrony.conf
+        #            echo -e "Server is added: ${value}\n"
+        #        fi
+        #    done
+        #fi
+        ## Add allowed subnets from local_subnets array
+        #if [ "${#local_subnets[@]}" -gt 0 ]; then
+        #    for value in "${local_subnets[@]}"; do
+        #        if [ -n "$value" ]; then
+        #            echo -e "${value}" >> /etc/chrony.conf
+        #            echo -e "Allowing access for subnet: ${value}\n"
+        #        fi
+        #    done
+        #fi
+        echo -e "Service is ready!"
+    else
+        echo -e "An error occurred while processing the input data."
+        retval=1
+    fi
     return $retval
-}
-
-
-call_backup() {
-    # TODO {arzdez} "Implement backup"
-    echo "Backup comming soon"
-    return 0
-}
-
-call_restore() {
-    # TODO {arzdez} "Implement restore"
-    echo "Restore comming soon"
-    return 0
 }
 
 call_start() {
     local retval=0
     systemctl enable --now chronyd.service || retval=1
-
+    if [ $retval -eq 0 ]; then
+        echo "Service chronyd started successfully."
+    else
+        echo "Failed to start service chronyd."
+    fi
 
     return $retval
 }
 
 call_stop(){
     local retval=0
-    systemctl disable --now  samba.service || retval=1
+    systemctl disable --now  chronyd.service || retval=1
     return $retval
+}
+
+call_demote(){
+    local retval=0
+    local backup_dir="/usr/share/alterator-service-chrony/config-backup"
+    echo "Demoting in progress..."
+    backup_config /etc/chrony.conf "before_demote" 1 || retval=1
+    echo "Creating backup of the current configuration file"
+    
+    rm -f /usr/share/alterator-service-chrony/deployment-config.json
+
+    mv -u "$backup_dir/chrony.conf.original" /etc/chrony.conf
+
+    chmod 644 /etc/chrony.conf
+    echo "Restored original configuration file from backup."
+    systemctl disable --now chrony
+    
+    if [ $retval -eq 0 ]; then
+        echo "Service chronyd stopped successfully."
+    else
+        echo "Failed to stop service chronyd."
+    fi
+
+
+    return $retval
+}
+
+call_status() {
+    local deployment_config_file="/usr/share/alterator-service-chrony/deployment-config.json"
+    local conf="/etc/chrony.conf"
+    local status_output=
+
+    if [ ! -f "$deployment_config_file" ] || [ ! -f "$conf" ]; then
+        exit 1
+    fi
+
+    status_output="$(cat "$deployment_config_file")"
+    echo "$status_output"
+
+    if systemctl is-active --quiet chrony.service; then
+        exit 128
+    else
+        exit 127
+    fi
+
+}
+
+call_backup(){
+    echo "service is not bombom right now"
+    return 0
+}
+
+call_restore(){
+    echo "service is not bombom right now"
+    return 0
+}
+
+call_configure(){
+    echo "service is not bombom right now"
+    return 0
 }
 
 case "$MODE" in
     provision)
         call_provision || GLOBAL_EXIT=1
         ;;
+    demote)
+        call_demote || GLOBAL_EXIT=1
+        ;;
+    status)
+        call_status 
+        ;;
+    backup)
+        call_backup || GLOBAL_EXIT=1
+        ;;
+    restore)
+        call_restore || GLOBAL_EXIT=1
+        ;;
     start)
         call_start || GLOBAL_EXIT=1
         ;;
     stop)
         call_stop || GLOBAL_EXIT=1
+        ;;
+    configure)
+        call_configure || GLOBAL_EXIT=1
         ;;
 esac
 
