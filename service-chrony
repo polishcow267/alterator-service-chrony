@@ -114,7 +114,6 @@ get_json_value() {
 backup_config() {
     local config_file="$1"
     local type="$2"
-    local flag="$3"
     local retval=0
 
     mkdir -p /usr/share/alterator-service-chrony/config-backup
@@ -125,11 +124,7 @@ backup_config() {
         echo "Backup file $backup_file already exists, skipping backup."
     fi
     if [ -f "$config_file" ]; then
-        if [ "$flag" = 1 ]; then
-            cp -u "$config_file" "$backup_file" || retval=1
-        else 
-            mv -u "$config_file" "$backup_file" || retval=1
-        fi
+        mv -u "$config_file" "$backup_file" || retval=1
     else
         echo "File $config_file not found, skipping backup."
     fi
@@ -189,19 +184,35 @@ call_provision() {
     
     echo -e "Data is received from stdin"
     
-    backup_config /etc/chrony.conf "original" 1 || retval=1
+    backup_config /etc/chrony.conf "original" || retval=1
 
     keys=$(echo "$input_json" | jq -r 'keys[]')
     for key in $keys; do
         case "$key" in
-            defaultPoll)
-                dP_value="$(parse_json "$input_json" "$key")"
-                if [ -n "$dP_value" ] && [ "$dP_value" != "null" ] && [ "$dP_value" = "true" ]; then
-                    sed -i '/^\s*pool pool\.ntp\.org/ s/^/#/' /etc/chrony.conf || retval=1
-                    echo -e "Pool is changed\n"
-                fi  
+            #defaultPoll)
+            #    dP_value="$(parse_json "$input_json" "$key")"
+            #    if [ -n "$dP_value" ] && [ "$dP_value" != "null" ] && [ "$dP_value" = "true" ]; then
+            #        echo -e "\npool pool.ntp.org iburst" >> /etc/chrony.conf || retval=1
+            #        echo -e "Default pool of NTP servers is added: pool.ntp.org\n"
+            #    fi  
+            #    ;;
+            makestep)
+                ms_value="$(parse_json "$input_json" "$key")"
+                if [ -n "$ms_value" ] && [ "$ms_value" != "null" ]; then
+                    echo -e "\nmakestep ${ms_value}" >> /etc/chrony.conf || retval=1
+                    echo -e "Makestep is set to ${ms_value}\n"
+                fi
                 ;;
+            rtcSync)
+                rtc_value="$(parse_json "$input_json" "$key")"
+                if [ -n "$rtc_value" ] && [ "$rtc_value" ]
+                then
+                    echo -e "\nrtcsync" >> /etc/chrony.conf || retval=1
+                    echo -e "RTC sync is set"
+                fi
+                ;;    
             *)
+            
                 false
                 ;;
         esac
@@ -213,9 +224,45 @@ call_provision() {
         case "$ntp_key" in
             serverDomainName)
                 value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
-                if [ -n "$value" ] && [ "$value" != "null" ]; then
-                    echo -e "\nserver ${value} iburst" >> /etc/chrony.conf || retval=1
-                    echo "${value}"
+                if [[ "$value" =~ ^\[.*\]$ ]]; then
+                    # Удаляем квадратные скобки и пробелы, разбиваем по запятой и переносу строки
+                    echo -e "Adding servers:"
+                    value_clean=$(echo "$value" | tr -d '[]' | tr ',\n' '\n' | sed '/^\s*$/d')
+                    while read -r server; do
+                        server=$(echo "$server" | xargs) # убираем пробелы по краям
+                        if [ -n "$server" ]; then
+                            echo -e "\nserver ${server} iburst" >> /etc/chrony.conf || retval=1
+                            echo "${server}"
+                        fi
+                    done <<< "$value_clean"
+                else
+                    if [ -n "$value" ] && [ "$value" != "null" ]; then
+                        echo -e "\nserver ${value} iburst" >> /etc/chrony.conf || retval=1
+                        echo "${value}"
+                    fi
+                fi
+                #if [ -n "$value" ] && [ "$value" != "null" ]; then
+                #    echo -e "\nserver ${value} iburst" >> /etc/chrony.conf || retval=1
+                #    echo "${value}"
+                #fi
+                ;;
+                poolDomainName)
+                value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
+                if [[ "$value" =~ ^\[.*\]$ ]]; then
+                    echo -e "Adding pools:"
+                    value_clean=$(echo "$value" | tr -d '[]' | tr ',\n' '\n' | sed '/^\s*$/d')
+                    while read -r pool; do
+                        pool=$(echo "$pool" | xargs) # убираем пробелы по краям
+                        if [ -n "$pool" ]; then
+                            echo -e "\npool ${pool} iburst" >> /etc/chrony.conf || retval=1
+                            echo "${pool}"
+                        fi
+                    done <<< "$value_clean"
+                else
+                    if [ -n "$value" ] && [ "$value" != "null" ]; then
+                        echo -e "\npool ${value} iburst" >> /etc/chrony.conf || retval=1
+                        echo "${value}"
+                    fi
                 fi
                 ;;
             *)
@@ -228,10 +275,22 @@ call_provision() {
     for subnet_key in $subnet_keys; do
         case "$subnet_key" in
             subnetIpAddresses)
-                value="$(echo "$input_json" | jq -r '.clientsSettings.subnetIpAddresses // empty' | tr -d '[], \n"')"
-                if [ -n "$value" ] && [ "$value" != "null" ]; then
-                    echo -e "\nallow ${value}" >> /etc/chrony.conf || retval=1
-                    #echo -e "Allowing access for subnet: ${value}\n"
+                value="$(get_json_value "$input_json" "$subnet_key" ".clientsSettings")"
+                if [[ "$value" =~ ^\[.*\]$ ]]; then
+                    echo -e "Adding allowed subnets:"
+                    value_clean=$(echo "$value" | tr -d '[]' | tr ',\n' '\n' | sed '/^\s*$/d')
+                    while read -r subnet; do
+                        subnet=$(echo "$subnet" | xargs)
+                        if [ -n "$subnet" ]; then
+                            echo -e "\nallow ${subnet}" >> /etc/chrony.conf || retval=1
+                            echo "${subnet}"
+                        fi
+                    done <<< "$value_clean"
+                else
+                    if [ -n "$value" ] && [ "$value" != "null" ]; then
+                        echo -e "\nallow ${value}" >> /etc/chrony.conf || retval=1
+                        echo "${value}"
+                    fi
                 fi
                 ;;
             localStratum)
@@ -246,6 +305,12 @@ call_provision() {
                 ;;
         esac
     done
+
+    echo -e "\ndriftfile /var/lib/chrony/drift" >> /etc/chrony.conf || retval=1
+    echo -e "\nlogdir /var/log/chrony" >> /etc/chrony.conf || retval=1
+    echo -e "\nntsdumpdir /var/lib/chrony" >> /etc/chrony.conf || retval=1
+
+    echo -e "Default directories are set:\nlogdir: /var/log/chrony\ndriftfile: /var/lib/chrony/drift\nntsdumpdir: /var/lib/chrony\n"
 
     echo "$input_json" > /usr/share/alterator-service-chrony/deployment-config.json || retval=1
     
@@ -303,7 +368,7 @@ call_demote(){
     
     rm -f /usr/share/alterator-service-chrony/deployment-config.json
 
-    mv -u "$backup_dir/chrony.conf.original" /etc/chrony.conf
+    mv -f "$backup_dir/chrony.conf.original" /etc/chrony.conf
 
     chmod 644 /etc/chrony.conf
     echo "Restored original configuration file from backup."
