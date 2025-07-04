@@ -176,6 +176,7 @@ call_deploy() {
     local input_json=
     local ntp_values=()
     local local_subnets=()
+    local flag=0
     input_json="$(read_stdin)"
     
     echo -e "Data is received from stdin"
@@ -187,26 +188,28 @@ call_deploy() {
     keys=$(echo "$input_json" | jq -r 'keys[]')
     for key in $keys; do
         case "$key" in
-            defaultPoll)
+            disableDefaultPoll)
                 dP_value="$(parse_json "$input_json" "$key")"
                 if [ -n "$dP_value" ] && [ "$dP_value" != "null" ] && [ "$dP_value" = "true" ]; then
-                    sed -i '/^\s*pool\s\+pool\.ntp\.org/ s/^\(\s*pool\s\+pool\.ntp\.org.*\)$/#\1/' /etc/chrony.conf
-                    echo -e "Default pool of NTP servers is added: pool.ntp.org\n"
+                    sed -i '/^pool pool\.ntp\.org/ s/^/#/' /etc/chrony.conf
+                    echo -e "Default pool of NTP servers is disabled"
+                    flag=1
                 fi  
                 ;;
             makestep)
                 ms_value="$(parse_json "$input_json" "$key")"
                 if [ -n "$ms_value" ] && [ "$ms_value" != "null" ]; then
-                    echo -e "\nmakestep ${ms_value}" >> /etc/chrony.conf || retval=1
-                    echo -e "Makestep is set to ${ms_value}\n"
+                    sed -i "s/^makestep .*/makestep ${ms_value}/" /etc/chrony.conf 
+                    echo -e "Makestep is set to ${ms_value}"
                 fi
                 ;;
             rtcSync)
                 rtc_value="$(parse_json "$input_json" "$key")"
-                if [ -n "$rtc_value" ] && [ "$rtc_value" ]
+                if [ -n "$rtc_value" ] && [ "$rtc_value" = "false" ]
                 then
-                    echo -e "\nrtcsync" >> /etc/chrony.conf || retval=1
-                    echo -e "RTC sync is set"
+                    sed -i '/^\s*rtcsync\s*$/d' /etc/chrony.conf
+                    echo -e "RTC sync is canseled"
+                else echo -e "RTC sync is set"
                 fi
                 ;;
             ntpServersSettings)
@@ -237,13 +240,12 @@ call_deploy() {
                         [ "$require" = "true" ] && ntp_line+=" require"
                         [ "$trust" = "true" ] && ntp_line+=" trust"
 
-                        echo -e "\n$ntp_line" >> /etc/chrony.conf || retval=1
+                        sed -i "8i $ntp_line" /etc/chrony.conf
                         echo "$ntp_line"
                     done
                 fi
                 ;;
             ntpPoolsSettings)
-                #ntp_pools=$(echo "$input_json" | jq -r '.ntpPoolsSettings | keys[]?')
                 ntp_array=$(echo "$input_json" | jq -c '.ntpPoolsSettings')
                 if [ "$ntp_array" != "null" ]; then
                     echo "$ntp_array" | jq -c '.[]' | while read -r ntp_json; do
@@ -272,9 +274,48 @@ call_deploy() {
                         [ "$trust" = "true" ] && ntp_line+=" trust"
                         [ -n "$maxsources" ] && ntp_line+=" maxsources $maxsources"
 
-                        echo -e "\n$ntp_line" >> /etc/chrony.conf || retval=1
+                        sed -i "8i $ntp_line" /etc/chrony.conf
                         echo "$ntp_line"
                     done
+                fi
+                ;;
+            ntpDefaultPool)
+                ntp_array=$(echo "$input_json" | jq -c '.ntpDefaultPool')
+                echo "test test test"
+                if [ "$ntp_array" != "null" ]; then
+                    ntp_json="$ntp_array"
+                    pool_domain=$(echo "$ntp_json" | jq -r '.poolDomainName // empty')
+                    bursts=$(echo "$ntp_json" | jq -r '.bursts // empty')
+                    minpoll=$(echo "$ntp_json" | jq -r '.minpoll // empty')
+                    maxpoll=$(echo "$ntp_json" | jq -r '.maxpoll // empty')
+                    no_select=$(echo "$ntp_json" | jq -r '.noSelect // empty')
+                    prefer=$(echo "$ntp_json" | jq -r '.prefer // empty')
+                    offline=$(echo "$ntp_json" | jq -r '.offline // empty')
+                    require=$(echo "$ntp_json" | jq -r '.require // empty')
+                    trust=$(echo "$ntp_json" | jq -r '.trust // empty')
+                    maxsources=$(echo "$ntp_json" | jq -r '.maxsources // empty')
+
+                    ntp_line="pool"
+                    [ -n "$pool_domain" ] && ntp_line+=" $pool_domain"
+                    [ -n "$bursts" ] && ntp_line+=" $bursts"
+                    [ -n "$minpoll" ] && ntp_line+=" minpoll $minpoll"
+                    [ -n "$maxpoll" ] && ntp_line+=" maxpoll $maxpoll"
+                    [ "$no_select" = "true" ] && ntp_line+=" noselect"
+                    [ "$prefer" = "true" ] && ntp_line+=" prefer"
+                    [ "$offline" = "offline" ] && ntp_line+=" offline"
+                    [ "$offline" = "auto offline" ] && ntp_line+=" auto_offline"
+                    [ "$require" = "true" ] && ntp_line+=" require"
+                    [ "$trust" = "true" ] && ntp_line+=" trust"
+                    [ -n "$maxsources" ] && ntp_line+=" maxsources $maxsources"
+                    
+                    if [ $flag -eq 1 ]; then
+                        sed -i "s|^\(#*\)pool pool\.ntp\.org iburst\$|#${ntp_line}|" /etc/chrony.conf
+                    else
+                        sed -i "s|^\(#*\)pool pool\.ntp\.org iburst\$|\1$ntp_line|" /etc/chrony.conf
+                    fi
+                    sed -i "s|^\(#*\)pool pool\.ntp\.org iburst\$|\1$ntp_line|" /etc/chrony.conf
+                    echo "$ntp_line"
+                    
                 fi
                 ;;
             *)
@@ -374,11 +415,11 @@ call_deploy() {
     #    esac
     #done
 
-    echo -e "\ndriftfile /var/lib/chrony/drift" >> /etc/chrony.conf || retval=1
-    echo -e "\nlogdir /var/log/chrony" >> /etc/chrony.conf || retval=1
-    echo -e "\nntsdumpdir /var/lib/chrony" >> /etc/chrony.conf || retval=1
-
-    echo -e "Default directories are set:\nlogdir: /var/log/chrony\ndriftfile: /var/lib/chrony/drift\nntsdumpdir: /var/lib/chrony\n"
+    #echo -e "\ndriftfile /var/lib/chrony/drift" >> /etc/chrony.conf || retval=1
+    #echo -e "\nlogdir /var/log/chrony" >> /etc/chrony.conf || retval=1
+    #echo -e "\nntsdumpdir /var/lib/chrony" >> /etc/chrony.conf || retval=1
+#
+    #echo -e "Default directories are set:\nlogdir: /var/log/chrony\ndriftfile: /var/lib/chrony/drift\nntsdumpdir: /var/lib/chrony\n"
 
     echo "$input_json" > /usr/share/alterator-service-chrony/deployment-config.json || retval=1
     
