@@ -258,6 +258,8 @@ pattern = "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][
 [parameters.makestep]
 display_name.en = "Makestep"
 display_name.ru = "Makestep"
+comment.en = "The first number is a float, the second is an integer"
+comment.ru = "Первое число с плавающей точкой, второе - целое"
 type = "string"
 default = "1.0 3"
 pattern = "^[0-9]+\\.[0-9]+ [0-9]+$"
