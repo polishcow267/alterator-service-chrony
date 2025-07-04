@@ -122,6 +122,9 @@ required = true
 display_name.en = "Maxsources"
 display_name.ru = "Maxsources"
 type = "integer"
+min = 1
+max = 16
+default = 4
 [parameters.ntpPool.properties.minpoll]
 display_name.en = "Minpoll"
 display_name.ru = "Minpoll"
