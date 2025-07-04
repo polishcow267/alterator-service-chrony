@@ -38,8 +38,8 @@ entryfile=/usr/share/alterator/service/service-chrony.service
 
 OPTIONS_LIST="help,
               version,
-              demote,
-              provision,
+              undeploy,
+              deploy,
               restore,
               backup,
               status,
@@ -60,11 +60,11 @@ while :; do
         -v|--version)
             show_version
             ;;
-        -d|--demote)
-            MODE="demote"
+        -d|--undeploy)
+            MODE="undeploy"
             ;;
-        -p|--provision)
-            MODE="provision"
+        -p|--deploy)
+            MODE="deploy"
             ;;
         -r|--restore)
             MODE="restore"
@@ -124,7 +124,7 @@ backup_config() {
         echo "Backup file $backup_file already exists, skipping backup."
     fi
     if [ -f "$config_file" ]; then
-        mv -u "$config_file" "$backup_file" || retval=1
+        cp -u "$config_file" "$backup_file" || retval=1
     else
         echo "File $config_file not found, skipping backup."
     fi
@@ -171,11 +171,7 @@ parse_json() {
     return 0
 }
 
-upper() {
-    echo -n "$1" | tr '[:lower:]' '[:upper:]'
-}
-
-call_provision() {
+call_deploy() {
     local retval=0
     local input_json=
     local ntp_values=()
@@ -185,17 +181,19 @@ call_provision() {
     echo -e "Data is received from stdin"
     
     backup_config /etc/chrony.conf "original" || retval=1
+    
+    echo "$input_json" > /usr/share/alterator-service-chrony/deployment-config.json || retval=1
 
     keys=$(echo "$input_json" | jq -r 'keys[]')
     for key in $keys; do
         case "$key" in
-            #defaultPoll)
-            #    dP_value="$(parse_json "$input_json" "$key")"
-            #    if [ -n "$dP_value" ] && [ "$dP_value" != "null" ] && [ "$dP_value" = "true" ]; then
-            #        echo -e "\npool pool.ntp.org iburst" >> /etc/chrony.conf || retval=1
-            #        echo -e "Default pool of NTP servers is added: pool.ntp.org\n"
-            #    fi  
-            #    ;;
+            defaultPoll)
+                dP_value="$(parse_json "$input_json" "$key")"
+                if [ -n "$dP_value" ] && [ "$dP_value" != "null" ] && [ "$dP_value" = "true" ]; then
+                    sed -i '/^\s*pool\s\+pool\.ntp\.org/ s/^\(\s*pool\s\+pool\.ntp\.org.*\)$/#\1/' /etc/chrony.conf
+                    echo -e "Default pool of NTP servers is added: pool.ntp.org\n"
+                fi  
+                ;;
             makestep)
                 ms_value="$(parse_json "$input_json" "$key")"
                 if [ -n "$ms_value" ] && [ "$ms_value" != "null" ]; then
@@ -210,7 +208,40 @@ call_provision() {
                     echo -e "\nrtcsync" >> /etc/chrony.conf || retval=1
                     echo -e "RTC sync is set"
                 fi
-                ;;    
+                ;;
+            ntpServersSettings)
+                #ntp_servers=$(echo "$input_json" | jq -r '.ntpServersSettings | keys[]?')
+                ntp_array=$(echo "$input_json" | jq -c '.ntpServersSettings')
+                if [ "$ntp_array" != "null" ]; then
+                    echo "$ntp_array" | jq -c '.[]' | while read -r ntp_json; do
+                        # Обрабатываем каждый объект JSON по отдельности
+                        server_domain=$(echo "$ntp_json" | jq -r '.serverDomainName // empty')
+                        bursts=$(echo "$ntp_json" | jq -r '.bursts // empty')
+                        minpoll=$(echo "$ntp_json" | jq -r '.minpoll // empty')
+                        maxpoll=$(echo "$ntp_json" | jq -r '.maxpoll // empty')
+                        no_select=$(echo "$ntp_json" | jq -r '.noSelect // empty')
+                        prefer=$(echo "$ntp_json" | jq -r '.prefer // empty')
+                        offline=$(echo "$ntp_json" | jq -r '.offline // empty')
+                        require=$(echo "$ntp_json" | jq -r '.require // empty')
+                        trust=$(echo "$ntp_json" | jq -r '.trust // empty')
+
+                        ntp_line="server"
+                        [ -n "$server_domain" ] && ntp_line+=" $server_domain"
+                        [ -n "$bursts" ] && ntp_line+=" $bursts"
+                        [ -n "$minpoll" ] && ntp_line+=" minpoll $minpoll"
+                        [ -n "$maxpoll" ] && ntp_line+=" maxpoll $maxpoll"
+                        [ "$no_select" = "true" ] && ntp_line+=" noselect"
+                        [ "$prefer" = "true" ] && ntp_line+=" prefer"
+                        [ "$offline" = "offline" ] && ntp_line+=" offline"
+                        [ "$offline" = "auto offline" ] && ntp_line+=" auto_offline"
+                        [ "$require" = "true" ] && ntp_line+=" require"
+                        [ "$trust" = "true" ] && ntp_line+=" trust"
+
+                        echo -e "\n$ntp_line" >> /etc/chrony.conf || retval=1
+                        echo "$ntp_line"
+                    done
+                fi
+                ;;
             *)
             
                 false
@@ -221,9 +252,11 @@ call_provision() {
 
     ntp_keys=$(echo "$input_json" | jq -r '.ntpServersSettings | keys[]?')
     for ntp_key in $ntp_keys; do
+        echo -e "\n $ntp_key"
         case "$ntp_key" in
             serverDomainName)
                 value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
+                echo -e "$value"
                 if [[ "$value" =~ ^\[.*\]$ ]]; then
                     # Удаляем квадратные скобки и пробелы, разбиваем по запятой и переносу строки
                     echo -e "Adding servers:"
@@ -245,25 +278,25 @@ call_provision() {
                 #    echo -e "\nserver ${value} iburst" >> /etc/chrony.conf || retval=1
                 #    echo "${value}"
                 #fi
-                ;;
-                poolDomainName)
-                value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
-                if [[ "$value" =~ ^\[.*\]$ ]]; then
-                    echo -e "Adding pools:"
-                    value_clean=$(echo "$value" | tr -d '[]' | tr ',\n' '\n' | sed '/^\s*$/d')
-                    while read -r pool; do
-                        pool=$(echo "$pool" | xargs) # убираем пробелы по краям
-                        if [ -n "$pool" ]; then
-                            echo -e "\npool ${pool} iburst" >> /etc/chrony.conf || retval=1
-                            echo "${pool}"
-                        fi
-                    done <<< "$value_clean"
-                else
-                    if [ -n "$value" ] && [ "$value" != "null" ]; then
-                        echo -e "\npool ${value} iburst" >> /etc/chrony.conf || retval=1
-                        echo "${value}"
-                    fi
-                fi
+                #;;
+                #poolDomainName)
+                #value="$(get_json_value "$input_json" "$ntp_key" ".ntpServersSettings")"
+                #if [[ "$value" =~ ^\[.*\]$ ]]; then
+                #    echo -e "Adding pools:"
+                #    value_clean=$(echo "$value" | tr -d '[]' | tr ',\n' '\n' | sed '/^\s*$/d')
+                #    while read -r pool; do
+                #        pool=$(echo "$pool" | xargs) # убираем пробелы по краям
+                #        if [ -n "$pool" ]; then
+                #            echo -e "\npool ${pool} iburst" >> /etc/chrony.conf || retval=1
+                #            echo "${pool}"
+                #        fi
+                #    done <<< "$value_clean"
+                #else
+                #    if [ -n "$value" ] && [ "$value" != "null" ]; then
+                #        echo -e "\npool ${value} iburst" >> /etc/chrony.conf || retval=1
+                #        echo "${value}"
+                #    fi
+                #fi
                 ;;
             *)
                 false
@@ -356,10 +389,16 @@ call_start() {
 call_stop(){
     local retval=0
     systemctl disable --now  chronyd.service || retval=1
+    if [ $retval -eq 0 ]; then
+        echo "Service chronyd stoped successfully."
+    else
+        echo "Failed to stop service chronyd."
+    fi
+
     return $retval
 }
 
-call_demote(){
+call_undeploy(){
     local retval=0
     local backup_dir="/usr/share/alterator-service-chrony/config-backup"
     echo "Demoting in progress..."
@@ -420,11 +459,11 @@ call_configure(){
 }
 
 case "$MODE" in
-    provision)
-        call_provision || GLOBAL_EXIT=1
+    deploy)
+        call_deploy || GLOBAL_EXIT=1
         ;;
-    demote)
-        call_demote || GLOBAL_EXIT=1
+    undeploy)
+        call_undeploy || GLOBAL_EXIT=1
         ;;
     status)
         call_status 
