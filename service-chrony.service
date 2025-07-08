@@ -10,7 +10,9 @@ display_name.en = "Disable default poll"
 display_name.ru = "Убрать пул по умолчанию"
 type = "boolean"
 context = [
-    "deploy"
+    "deploy",
+    "configure",
+    "status"
 ]
 
 [parameters.ntpServersSettings]
@@ -21,7 +23,8 @@ array_type = "object"
 prototype = "ntpServer"
 context = [
     "deploy",
-    "status"
+    "status",
+    "configure"
 ]
 required = [
     "deploy"
@@ -35,7 +38,8 @@ array_type = "object"
 prototype = "ntpPool"
 context = [
     "deploy",
-    "status"
+    "status",
+    "configure"
 ]
 required = [
     "deploy"
@@ -144,13 +148,13 @@ type = "enum"
 required = false
 values = ["offline", "auto offline"]
 [parameters.ntpPool.properties.prefer]
-display_name.en = "Prefer this server"
-display_name.ru = "Предпочитать этот сервер другим"
+display_name.en = "Prefer this pool"
+display_name.ru = "Предпочитать этот пул другим"
 type = "boolean"
 required = false
 [parameters.ntpPool.properties.noSelect]
 display_name.en = "Never select this source"
-display_name.ru = "Никогда не выбирать этот сервер"
+display_name.ru = "Никогда не выбирать этот пул"
 type = "boolean"
 required = false
 [parameters.ntpPool.properties.trust]
@@ -170,7 +174,10 @@ display_name.ru = "Пул серверов NTP по умолчанию"
 comment.en = "pool.ntp.org"
 comment.ru = "pool.ntp.org"
 type = "object"
-context = [ "deploy" ]
+context = [ 
+    "deploy", 
+    "configure" 
+]
 [parameters.ntpDefaultPool.properties.poolDomainName]
 display_name.en = "Domain name of NTP pool"
 display_name.ru = "Доменное имя пула NTP"
@@ -237,16 +244,15 @@ display_name.en = "Clients subnets settings"
 display_name.ru = "Настройка клиентских подсетей"
 type = "object"
 context = [
-    "status"
-]
-required = [
-    "deploy"
+    "status",
+    "configure"
 ]
 [parameters.clientsSettings.properties.localStratum]
 display_name.en = "Local stratum of this server"
 display_name.ru = "Уровень этого сервера"
 type = "integer"
 default = 10
+required = true
 [parameters.clientsSettings.properties.subnetIpAddresses]
 display_name.en = "IP address of local subnets"
 display_name.ru = "IP адрес локальных подсетей"
@@ -265,7 +271,8 @@ default = "1.0 3"
 pattern = "^[0-9]+\\.[0-9]+ [0-9]+$"
 context = [
     "deploy",
-    "status"
+    "status",
+    "configure"
 ]
 required = [
     "deploy"
@@ -280,7 +287,8 @@ type = "boolean"
 default = true
 context = [
     "deploy",
-    "status"
+    "status",
+    "configure"
 ]
 required = [
     "deploy"
