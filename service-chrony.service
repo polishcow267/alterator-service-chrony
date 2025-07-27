@@ -65,9 +65,14 @@ display_name.ru = "burst/iburst"
 comment.ru = "Отправляет пакет из 8 запросов (ibusrt) или 4 запросов (burst), когда от сервера не удается получить данные"
 comment.en = "Sends a packet of 8 requests (ibusrt) or 4 requests (burst) when data cannot be received from the server"
 type = "enum"
-values = ["burst", "iburst"]
 default = "iburst"
 required = true
+[parameters.ntpServer.properties.bursts.values.burst]
+display_name.en = "burst"
+display_name.ru = "burst"
+[parameters.ntpServer.properties.bursts.values.iburst]
+display_name.en = "iburst"
+display_name.ru = "iburst"
 [parameters.ntpServer.properties.minpoll]
 display_name.en = "Minpoll"
 display_name.ru = "Minpoll"
@@ -91,7 +96,12 @@ display_name.en = "Offline mode"
 display_name.ru = "Режим оффлайн"
 type = "enum"
 required = false
-values = ["offline", "auto offline"]
+[parameters.ntpServer.properties.offline.values.offline]
+display_name.en = "offline"
+display_name.ru = "offline"
+[parameters.ntpServer.properties.offline.values.auto_offline]
+display_name.en = "auto offline"
+display_name.ru = "auto offline"
 [parameters.ntpServer.properties.prefer]
 display_name.en = "Prefer this server"
 display_name.ru = "Предпочитать этот сервер другим"
@@ -129,9 +139,14 @@ display_name.ru = "burst/iburst"
 comment.ru = "Отправляет пакет из 8 запросов (ibusrt) или 4 запросов (burst), когда от сервера не удается получить данные"
 comment.en = "Sends a packet of 8 requests (ibusrt) or 4 requests (burst) when data cannot be received from the server"
 type = "enum"
-values = ["burst", "iburst"]
 default = "iburst"
 required = true
+[parameters.ntpPool.properties.bursts.values.burst]
+display_name.en = "burst"
+display_name.ru = "burst"
+[parameters.ntpPool.properties.bursts.values.iburst]
+display_name.en = "iburst"
+display_name.ru = "iburst"
 [parameters.ntpPool.properties.maxsources]
 display_name.en = "Maxsources"
 display_name.ru = "Maxsources"
@@ -164,7 +179,12 @@ display_name.en = "Offline mode"
 display_name.ru = "Режим оффлайн"
 type = "enum"
 required = false
-values = ["offline", "auto offline"]
+[parameters.ntpPool.properties.offline.values.offline]
+display_name.en = "offline"
+display_name.ru = "offline"
+[parameters.ntpPool.properties.offline.values.auto_offline]
+display_name.en = "auto offline"
+display_name.ru = "auto offline"
 [parameters.ntpPool.properties.prefer]
 display_name.en = "Prefer this pool"
 display_name.ru = "Предпочитать этот пул другим"
@@ -202,9 +222,14 @@ display_name.ru = "burst/iburst"
 comment.ru = "Отправляет пакет из 8 запросов (ibusrt) или 4 запросов (burst), когда от сервера не удается получить данные"
 comment.en = "Sends a packet of 8 requests (ibusrt) or 4 requests (burst) when data cannot be received from the server"
 type = "enum"
-values = ["burst", "iburst"]
 default = "iburst"
 required = true
+[parameters.ntpDefaultPool.properties.bursts.values.burst]
+display_name.en = "burst"
+display_name.ru = "burst"
+[parameters.ntpDefaultPool.properties.bursts.values.iburst]
+display_name.en = "iburst"
+display_name.ru = "iburst"
 [parameters.ntpDefaultPool.properties.maxsources]
 display_name.en = "Maxsources"
 display_name.ru = "Maxsources"
@@ -239,7 +264,12 @@ comment.ru = "offline сразу отмечает сервер не доступ
 comment.en = "offline immediately marks the server as unavailable, auto offline will make the server unavailable if the request fails"
 type = "enum"
 required = false
-values = ["offline", "auto offline"]
+[parameters.ntpDefaultPool.properties.offline.values.offline]
+display_name.en = "offline"
+display_name.ru = "offline"
+[parameters.ntpDefaultPool.properties.offline.values.auto_offline]
+display_name.en = "auto offline"
+display_name.ru = "auto offline"
 [parameters.ntpDefaultPool.properties.prefer]
 display_name.en = "Prefer this server"
 display_name.ru = "Предпочитать этот сервер другим"

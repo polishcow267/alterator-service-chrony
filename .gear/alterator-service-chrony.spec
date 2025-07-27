@@ -1,7 +1,7 @@
 %define _unpackaged_files_terminate_build 1
 %define service service-chrony
 Name: alterator-service-chrony
-Version: 0.1
+Version: 0.1.2
 Release: alt1
 
 Summary: Service for managment chrony
@@ -25,11 +25,12 @@ Service for deploy chrony.
 %setup
 
 %install
-mkdir -p %buildroot%_alterator_datadir/service
+mkdir -p %buildroot%_alterator_datadir/services
+mkdir -p %buildroot%_localstatedir/alterator/service/%service/backups
 
 install -p -D -m755 %service %buildroot%_bindir/%service
 install -p -D -m644 %service.backend %buildroot%_alterator_datadir/backends/%service.backend
-install -p -D -m644 %service.service %buildroot%_alterator_datadir/service/%service.service
+install -p -D -m644 %service.service %buildroot%_alterator_datadir/services/%service.service
 
 %files
 %_alterator_datadir/backends/%service.backend

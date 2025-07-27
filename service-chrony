@@ -2,7 +2,7 @@
 # Chrony service provision
 # Tool for provision chrony service
 #
-# Copyright (C) 2025 Mukhin Michael
+# Copyright (C) 2025 Mukhin Michael <domfrost78@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -136,11 +136,10 @@ backup_config() {
     local config_file="$1"
     local type="$2"
     local retval=0
-
-    mkdir -p /usr/share/alterator-service-chrony/config-backup
+    
     local backup_file=
 
-    backup_file="/usr/share/alterator-service-chrony/config-backup/$(basename $config_file).$type"
+    backup_file="/var/lib/alterator/service/chrony/backups/$(basename $config_file).$type"
     if [ -f "$backup_file" ]; then
         echo "Backup file $backup_file already exists, skipping backup."
     fi
@@ -222,7 +221,7 @@ set_servers(){
                 [ "$no_select" = "true" ] && ntp_line+=" noselect"
                 [ "$prefer" = "true" ] && ntp_line+=" prefer"
                 [ "$offline" = "offline" ] && ntp_line+=" offline"
-                [ "$offline" = "auto offline" ] && ntp_line+=" auto_offline"
+                [ "$offline" = "auto_offline" ] && ntp_line+=" auto_offline"
                 [ "$require" = "true" ] && ntp_line+=" require"
                 [ "$trust" = "true" ] && ntp_line+=" trust"
                 if grep -q "^server $server_domain" /etc/chrony.conf; then
@@ -277,7 +276,7 @@ set_pools(){
                 [ "$no_select" = "true" ] && ntp_line+=" noselect"
                 [ "$prefer" = "true" ] && ntp_line+=" prefer"
                 [ "$offline" = "offline" ] && ntp_line+=" offline"
-                [ "$offline" = "auto offline" ] && ntp_line+=" auto_offline"
+                [ "$offline" = "auto_offline" ] && ntp_line+=" auto_offline"
                 [ "$require" = "true" ] && ntp_line+=" require"
                 [ "$trust" = "true" ] && ntp_line+=" trust"
                 [ -n "$maxsources" ] && ntp_line+=" maxsources $maxsources"
@@ -328,7 +327,7 @@ set_default_pool(){
             [ "$no_select" = "true" ] && ntp_line+=" noselect"
             [ "$prefer" = "true" ] && ntp_line+=" prefer"
             [ "$offline" = "offline" ] && ntp_line+=" offline"
-            [ "$offline" = "auto offline" ] && ntp_line+=" auto_offline"
+            [ "$offline" = "auto_offline" ] && ntp_line+=" auto_offline"
             [ "$require" = "true" ] && ntp_line+=" require"
             [ "$trust" = "true" ] && ntp_line+=" trust"
             [ -n "$maxsources" ] && ntp_line+=" maxsources $maxsources"
@@ -355,7 +354,7 @@ call_deploy() {
     
     backup_config /etc/chrony.conf "original" || retval=1
 
-    echo "$input_json" > /usr/share/alterator-service-chrony/deployment-config.json || retval=1
+    echo "$input_json" > /var/lib/alterator/service/chrony/backups/deployment-config.json || retval=1
 
     keys=$(echo "$input_json" | jq -r 'keys[]')
     for key in $keys; do
@@ -403,8 +402,7 @@ call_deploy() {
         esac
     done
 
-    echo "$input_json" > /usr/share/alterator-service-chrony/deployment-config.json || retval=1
-    
+
     if [ $retval -eq 0 ]; then
         echo -e "Service is ready!"
     else
@@ -440,15 +438,13 @@ call_stop(){
 
 call_undeploy(){
     local retval=0
-    local backup_dir="/usr/share/alterator-service-chrony/config-backup"
+    local backup_dir="/var/lib/alterator/service/chrony/backups/"
     echo "Demoting in progress..."
     backup_config /etc/chrony.conf "before_demote" || retval=1
     echo "Creating backup of the current configuration file"
     
-    rm -f /usr/share/alterator-service-chrony/deployment-config.json
-    if [ -f /usr/share/alterator-service-chrony/configuring-config.json ]; then
-        rm -f /usr/share/alterator-service-chrony/configuring-config.json
-    fi
+    rm -f /var/lib/alterator/service/chrony/backups/deployment-config.json
+    rm -f /var/lib/alterator/service/chrony/backups/configuring-config.json
 
     mv -f "$backup_dir/chrony.conf.original" /etc/chrony.conf
 
@@ -467,8 +463,8 @@ call_undeploy(){
 }
 
 call_status() {
-    local deployment_config_file="/usr/share/alterator-service-chrony/deployment-config.json"
-    local configuring_config_file="/usr/share/alterator-service-chrony/configuring-config.json"
+    local deployment_config_file="/var/lib/alterator/service/chrony/backups/deployment-config.json"
+    local configuring_config_file="/var/lib/alterator/service/chrony/backups/configuring-config.json"
     local conf="/etc/chrony.conf"
     local status_output=
 
@@ -524,7 +520,7 @@ call_backup(){
 call_restore(){
     local retval=0
     local input_json=
-    local backup_dir="/usr/share/alterator-service-chrony/config-backup"
+    local backup_dir="/var/lib/alterator/service/chrony/config-backup"
     input_json="$(read_stdin)"
 
     keys=$(echo "$input_json" | jq -r 'keys[]')
@@ -536,8 +532,8 @@ call_restore(){
                 if [ -z "$backup_name" ]; then
                     echo "Backup name is empty, exiting."
                     retval=1
-                elif [ ! -f "/usr/share/alterator-service-chrony/config-backup/chrony.conf.$backup_name" ]; then
-                    echo "Backup file /usr/share/alterator-service-chrony/config-backup/chrony.conf.$backup_name does not exist."
+                elif [ ! -f "/var/lib/alterator/service/chrony/backups/chrony.conf.$backup_name" ]; then
+                    echo "Backup file /var/lib/alterator/service/chrony/backups/chrony.conf.$backup_name does not exist."
                     retval=1
                 else
                     cp -f "$backup_dir/chrony.conf.$backup_name" /etc/chrony.conf
@@ -631,7 +627,7 @@ call_configure(){
         fi
     done
     
-    echo "$input_json" > /usr/share/alterator-service-chrony/configuring-config.json || retval=1
+    echo "$input_json" > /var/lib/alterator/service/chrony/backups/configuring-config.json || retval=1
 
     keys=$(echo "$input_json" | jq -r 'keys[]')
     for key in $keys; do

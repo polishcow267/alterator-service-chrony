@@ -4,7 +4,7 @@ interface = "service1"
 name = "service_chrony"
 
 [methods.Info]
-execute = "cat /usr/share/alterator/service/service-chrony.service"
+execute = "cat /usr/share/alterator/services/service-chrony.service"
 action_id = "Info"
 stdout_bytes = true
 
